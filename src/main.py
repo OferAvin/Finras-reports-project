@@ -27,8 +27,9 @@ def get_soup_for_date_and_page(start_date: str, end_date: str, page: int):
         url_str = f'https://www.finra.org/arbitration-mediation/arbitration-awards-online?aao_radios=all&field_case_id_text=&search=&field_forum_tax=All&field_special_case_type_tax=All&field_core_official_dt%5Bmin%5D={start_date}&field_core_official_dt%5Bmax%5D={end_date}&page={page}'
         html_txt = requests.get(url_str).text
         return BeautifulSoup(html_txt, 'lxml')
-    except:
-        raise Exception('Could not reach URL '+ url_str)
+    except Exception as e:
+        print(e)
+        # raise Exception('Could not reach URL '+ url_str)
 
 def download_pdf(pdf_url):
     pdf_name = pdf_url.split('/')[-1]
@@ -63,7 +64,8 @@ def extract_text_from_pdf(pdf_url):
 
     clean_text = clean_page_header_from_text(text)
 
-    if re.search('\w' , clean_text) is None:
+    # Check PDF validity
+    if re.search('\w' , clean_text) is None or len(clean_text) < 200:
         raise Exception('Could not extract text from that file')
     # with open('out'+pdf_name+'.txt', 'w', encoding='utf-8') as output_file:
     #     output_file.write(clean_text)
@@ -73,8 +75,8 @@ def extract_text_from_pdf(pdf_url):
 
 ############## MAIN CODE ###############
 
-start_date = datetime.datetime(2022, 3, 19)  # should be accepted as argument
-end_date = datetime.datetime.now()
+start_date = datetime.datetime(2022, 3, 2)  # should be accepted as argument
+end_date = datetime.datetime(2022, 4, 6)
 
 start_date_str = start_date.strftime("%m/%d/%Y")
 end_date_str = end_date.strftime("%m/%d/%Y")
@@ -101,29 +103,35 @@ for page in range(n_pages):
             # Document Number
             doc_num_link = doc.find('a')
             doc_dict['doc_num'] = doc_num_link.text
-            print(doc_dict['doc_num'])
-            # Document URL
-            doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
+            if True:
+            # if doc_dict['doc_num'] == '21-02577':
+                print(doc_dict['doc_num'])
+                # Document URL
+                doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
 
-            # Participants Information
-            participants_container = doc.find('div', class_="push-down-15")
-            participants_info = participants_container.find_all('div')
-            doc_dict['claimants'] = get_element_text_only(participants_info[0])
-            doc_dict['claimant_represent'] = get_element_text_only(participants_info[1])
-            doc_dict['respondents'] = get_element_text_only(participants_info[2])
-            doc_dict['respondent_represent'] = get_element_text_only(participants_container)
+                # Participants Information
+                participants_container = doc.find('div', class_="push-down-15")
+                participants_info = participants_container.find_all('div')
+                doc_dict['claimants'] = get_element_text_only(participants_info[0])
+                doc_dict['claimant_represent'] = get_element_text_only(participants_info[1])
+                doc_dict['respondents'] = get_element_text_only(participants_info[2])
+                doc_dict['respondent_represent'] = get_element_text_only(participants_container)
 
-            # Date
-            doc_dict['date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
+                # Date
+                doc_dict['date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
 
-            # Textual data from pdf
-            text = extract_text_from_pdf(doc_dict['doc_url'])
+                # Textual data from pdf
+                text = extract_text_from_pdf(doc_dict['doc_url'])
 
-            doc_dict['award_str'] = re.search("AWARD(.*)FEES", text).group(0)[5:-4]
+                doc_dict['award_str'] = re.search(r"AWARD(.*)FEES|ARBITRATOR", text).group(0)[5:-4]
 
-            data.append(doc_dict)
+                data.append(doc_dict)
+
     except Exception as e:
-        print(doc_dict['doc_num'], ':', e)
+        with open('../errors.log', 'a') as log:
+            error_str = doc_dict['doc_num'] + ': ' + str(e)
+            log.write(error_str)
+            print(error_str)
 
 data_df = pd.DataFrame(data)
 
@@ -132,4 +140,4 @@ end_date_str = end_date.strftime("%m-%d-%Y")
 csv_path = f"../csv/{start_date_str}_till_{end_date_str}.csv"
 data_df.to_csv(csv_path, index=False)
 
-print('CSV Saved')
+print('CSV Saved to ', csv_path)
