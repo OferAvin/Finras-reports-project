@@ -55,14 +55,15 @@ def download_pdf(pdf_url):
     return path
 
 
-def clean_page_header_from_text(text: str):
+def clean_page_header_from_text(txt_to_clean: str):
+    txt_to_clean = txt_to_clean.replace("\n", "")
     pattern = re.compile(
-        r'FINRA Dispute Resolution ServicesArbitration No.  \d{1,2}-\d{3,5}Award Page (\d{1,2}) of (\d{1,2})')
-    matches = pattern.finditer(text)
+        r'FINRA Dispute Resolution Services\s{0,1}Arbitration No.  \d{1,2}-\d{3,5}\s{0,1}Award Page (\d{1,2}) of (\d{1,2})')
+    matches = pattern.finditer(txt_to_clean)
     matches_list = [match for match in matches]
     for match in reversed(matches_list):
-        text = text[0:match.span()[0]] + text[match.span()[1]:]
-    return text
+        txt_to_clean = txt_to_clean[0:match.span()[0]] + txt_to_clean[match.span()[1]:]
+    return txt_to_clean
 
 
 def extract_text_from_pdf(pdf_url):
@@ -85,8 +86,8 @@ def extract_text_from_pdf(pdf_url):
 
 ############## MAIN CODE ###############
 
-start_date = datetime.datetime(2022, 3, 2)  # should be accepted as argument
-end_date = datetime.datetime(2022, 4, 6)
+start_date = datetime.datetime(2022, 4, 1)  # should be accepted as argument
+end_date = datetime.datetime(2022, 4, 9)
 
 start_date_str = start_date.strftime("%m/%d/%Y")
 end_date_str = end_date.strftime("%m/%d/%Y")
@@ -112,9 +113,10 @@ for page in range(n_pages):
             # Document Number
             doc_num_link = doc.find('a')
             doc_dict['doc_num'] = doc_num_link.text
-            if True:
-                # if doc_dict['doc_num'] == '21-02577':
-                print(doc_dict['doc_num'])
+            n_files += 1
+            # if True:
+            if doc_dict['doc_num'] == '21-02300':
+                print(f"{doc_dict['doc_num']}...")
                 # Document URL
                 doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
 
@@ -138,7 +140,7 @@ for page in range(n_pages):
                 doc_dict['award_str'] = re.search(r"AWARD(.*)FEES|ARBITRATOR", text).group(0)[5:-4]
 
                 data.append(doc_dict)
-                n_files += 1
+
     except ExtractTextFromPDFError as e:
         err_msg = f"{doc_dict['doc_num']}: {str(e)}"
         logging.error(err_msg)
@@ -158,5 +160,5 @@ end_date_str = end_date.strftime("%m-%d-%Y")
 csv_path = f"../csv/{start_date_str}_till_{end_date_str}.csv"
 data_df.to_csv(csv_path, index=False)
 
-print(f'CSV Saved to {csv_path}')
-print(f'Could not process {n_failed_files} files out of {n_files}')
+print(f'\nCSV Saved to {csv_path}')
+print(f'\nCould not process {n_failed_files} files out of {n_files}')
