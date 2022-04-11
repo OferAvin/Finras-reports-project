@@ -77,6 +77,14 @@ def extract_text_from_pdf(pdf_url):
         raise ExtractTextFromPDFError('Could not extract text from file')
     return clean_text
 
+def get_nature_of_dispute(txt: str):
+    pattern = re.compile(
+        rf"Nature of the Dispute: {nature_of_dispute_opt} vs. {nature_of_dispute_opt}(vs. {nature_of_dispute_opt})?")
+    match_iter = pattern.finditer(txt)
+    match = next(match_iter)
+    nod_str = txt[match.span()[0]:match.span()[1]]
+    nod_str = nod_str.split(':')[1]
+    return nod_str
 
 ############ CONFIGURATIONS #############
 
@@ -90,6 +98,9 @@ logging.basicConfig(filename=log_file, level=logging.INFO,
 start_date = datetime.datetime(2022, 3, 20)  # should be accepted as argument
 end_date = datetime.datetime(2022, 4, 1)
 
+nature_of_dispute_opt = r'(Associated Person|Member|Customer|Non-Member)'
+
+
 start_date_str = start_date.strftime("%m-%d-%Y")
 end_date_str = end_date.strftime("%m-%d-%Y")
 
@@ -97,12 +108,6 @@ date_range_str = f'{start_date_str}_till_{end_date_str}'
 
 logging.info(f'LOGS FOR: {date_range_str}')
 csv_path = f"../csv/{date_range_str}.csv"
-
-gr = r'(Associated Person|Member|Customer|Non-Member)'
-pat = re.compile(rf"Nature of the Dispute: {gr} vs. {gr} (vs. {gr})?")
-m = pat.finditer(txt_to_clean)
-for n in m:
-    print(n)
 
 ############## MAIN CODE ###############
 start_date_str = start_date_str.replace('-', '/')
@@ -130,8 +135,8 @@ for page in range(n_pages):
             doc_num_link = doc.find('a')
             doc_dict['doc_num'] = doc_num_link.text
             n_files += 1
-            # if True:
-            if doc_dict['doc_num'] == '18-00566':
+            if True:
+            # if doc_dict['doc_num'] == '18-00566':
                 print(f"{doc_dict['doc_num']}...")
                 # Document URL
                 doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
@@ -155,6 +160,7 @@ for page in range(n_pages):
 
                 doc_dict['award_str'] = re.search(r"AWARD(.*)FEES|ARBITRATOR", text).group(0)[5:-4]
 
+                doc_dict['nature_of_dispute'] = get_nature_of_dispute(text)
 
                 data.append(doc_dict)
 
