@@ -52,7 +52,7 @@ def download_pdf(pdf_url):
 def clean_page_header_from_text(txt_to_clean: str):
     txt_to_clean = txt_to_clean.replace("\n", "")
     pattern = re.compile(
-        r'FINRA Dispute Resolution Services\s{0,1}Arbitration No.  \d{1,2}-\d{3,5}\s{0,1}Award Page (\d{1,2}) of (\d{1,2})')
+        r'FINRA Dispute Resolution Services\s?Arbitration No.  \d{1,2}-\d{3,5}\s?Award Page (\d{1,2}) of (\d{1,2})')
     matches = pattern.finditer(txt_to_clean)
     matches_list = [match for match in matches]
     for match in reversed(matches_list):
@@ -98,6 +98,12 @@ date_range_str = f'{start_date_str}_till_{end_date_str}'
 logging.info(f'LOGS FOR: {date_range_str}')
 csv_path = f"../csv/{date_range_str}.csv"
 
+gr = r'(Associated Person|Member|Customer|Non-Member)'
+pat = re.compile(rf"Nature of the Dispute: {gr} vs. {gr} (vs. {gr})?")
+m = pat.finditer(txt_to_clean)
+for n in m:
+    print(n)
+
 ############## MAIN CODE ###############
 start_date_str = start_date_str.replace('-', '/')
 end_date_str = end_date_str.replace('-', '/')
@@ -124,8 +130,8 @@ for page in range(n_pages):
             doc_num_link = doc.find('a')
             doc_dict['doc_num'] = doc_num_link.text
             n_files += 1
-            if True:
-            # if doc_dict['doc_num'] == '18-01349':
+            # if True:
+            if doc_dict['doc_num'] == '18-00566':
                 print(f"{doc_dict['doc_num']}...")
                 # Document URL
                 doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
@@ -148,6 +154,7 @@ for page in range(n_pages):
                 text = extract_text_from_pdf(doc_dict['doc_url'])
 
                 doc_dict['award_str'] = re.search(r"AWARD(.*)FEES|ARBITRATOR", text).group(0)[5:-4]
+
 
                 data.append(doc_dict)
 
