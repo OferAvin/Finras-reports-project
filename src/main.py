@@ -7,17 +7,10 @@ import pandas as pd
 import logging
 
 
-# Logging configurations
-now = datetime.datetime.now()
-strat_time_str = now.strftime('%m-%d-%Y_%H-%M-%S')
-log_file = f'../logs/log_{strat_time_str}.log'
-logging.basicConfig(filename=log_file, level=logging.ERROR,
-                    format='%(levelname)s: %(message)s')
-
-
 class ExtractTextFromPDFError(Exception):
     """Raised when there are no words in pdf"""
     pass
+
 
 def get_element_text_only(element):
     # returns the text of this specific element only without children text
@@ -44,6 +37,7 @@ def get_soup_for_date_and_page(start_date: str, end_date: str, page: int):
         msg = 'Could Not Reach Finra\'s website. Check internet conection'
         logging.critical(msg)
         print(msg)
+        exit(1)
 
 
 def download_pdf(pdf_url):
@@ -70,7 +64,7 @@ def extract_text_from_pdf(pdf_url):
     pdf_path = download_pdf(pdf_url)
     pdf_name = pdf_path.split('/')[-1]
     reader = PdfFileReader(pdf_path)
-
+    n_pages = reader.numPages
     # PDF to String
     text = ""
     for page in reader.pages:
@@ -79,18 +73,34 @@ def extract_text_from_pdf(pdf_url):
     clean_text = clean_page_header_from_text(text)
 
     # Check PDF validity
-    if re.search('\w', clean_text) is None or len(clean_text) < 200:
+    if re.search('\w', clean_text) is None or len(clean_text) < 200 * n_pages:
         raise ExtractTextFromPDFError('Could not extract text from file')
     return clean_text
 
 
+############ CONFIGURATIONS #############
+
+# Logging configurations
+now = datetime.datetime.now()
+strat_time_str = now.strftime('%m-%d-%Y_%H-%M-%S')
+log_file = f'../logs/log_{strat_time_str}.log'
+logging.basicConfig(filename=log_file, level=logging.INFO,
+                    format='%(levelname)s: %(message)s')
+
+start_date = datetime.datetime(2022, 3, 20)  # should be accepted as argument
+end_date = datetime.datetime(2022, 4, 1)
+
+start_date_str = start_date.strftime("%m-%d-%Y")
+end_date_str = end_date.strftime("%m-%d-%Y")
+
+date_range_str = f'{start_date_str}_till_{end_date_str}'
+
+logging.info(f'LOGS FOR: {date_range_str}')
+csv_path = f"../csv/{date_range_str}.csv"
+
 ############## MAIN CODE ###############
-
-start_date = datetime.datetime(2022, 4, 1)  # should be accepted as argument
-end_date = datetime.datetime(2022, 4, 9)
-
-start_date_str = start_date.strftime("%m/%d/%Y")
-end_date_str = end_date.strftime("%m/%d/%Y")
+start_date_str = start_date_str.replace('-', '/')
+end_date_str = end_date_str.replace('-', '/')
 
 soup = get_soup_for_date_and_page(start_date_str, end_date_str, 0)
 n_pages = get_n_pages(soup)
@@ -99,23 +109,23 @@ data = []
 n_files = 0
 n_failed_files = 0
 
-
 for page in range(n_pages):
-    try:
-        soup = get_soup_for_date_and_page(start_date_str, end_date_str, page)
-        documents_table = soup.find('tbody')
 
-        docs = documents_table.find_all('tr')
+    soup = get_soup_for_date_and_page(start_date.strftime("%m/%d/%Y"), end_date.strftime("%m/%d/%Y"), page)
+    documents_table = soup.find('tbody')
 
-        for doc in docs:
+    docs = documents_table.find_all('tr')
+
+    for doc in docs:
+        try:
             doc_dict = {}
 
             # Document Number
             doc_num_link = doc.find('a')
             doc_dict['doc_num'] = doc_num_link.text
             n_files += 1
-            # if True:
-            if doc_dict['doc_num'] == '21-02300':
+            if True:
+            # if doc_dict['doc_num'] == '18-01349':
                 print(f"{doc_dict['doc_num']}...")
                 # Document URL
                 doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
@@ -141,23 +151,19 @@ for page in range(n_pages):
 
                 data.append(doc_dict)
 
-    except ExtractTextFromPDFError as e:
-        err_msg = f"{doc_dict['doc_num']}: {str(e)}"
-        logging.error(err_msg)
-        print(err_msg)
-        n_failed_files += 1
-    except PermissionError as e:
-        err_msg = f"{doc_dict['doc_num']}: Permission denied: '../documents/21-02138.pdf'. Close file and try again"
-        logging.error(err_msg)
-        print(err_msg)
-        n_failed_files += 1
-
+        except ExtractTextFromPDFError as e:
+            err_msg = f"{doc_dict['doc_num']}: {str(e)}"
+            logging.error(err_msg)
+            print(err_msg)
+            n_failed_files += 1
+        except PermissionError as e:
+            err_msg = f"{doc_dict['doc_num']}: Permission denied: '../documents/21-02138.pdf'. Close file and try again"
+            logging.error(err_msg)
+            print(err_msg)
+            n_failed_files += 1
 
 data_df = pd.DataFrame(data)
 
-start_date_str = start_date.strftime("%m-%d-%Y")
-end_date_str = end_date.strftime("%m-%d-%Y")
-csv_path = f"../csv/{start_date_str}_till_{end_date_str}.csv"
 data_df.to_csv(csv_path, index=False)
 
 print(f'\nCSV Saved to {csv_path}')
