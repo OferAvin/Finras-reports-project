@@ -1,4 +1,5 @@
 from PyPDF2 import PdfFileReader
+from PyPDF2 import utils as pdf_utils
 import re
 from bs4 import BeautifulSoup, NavigableString
 import requests
@@ -12,8 +13,11 @@ class ExtractTextFromPDFError(Exception):
     pass
 
 
+########## FUNCTIONS ##########
+
+
 def get_element_text_only(element):
-    # returns the text of this specific element only without children text
+    """returns the text of this specific element only without children text"""
     text_list = [child_elem for child_elem in element if isinstance(child_elem, NavigableString)]
     text_list = list(filter(('\n').__ne__, text_list))
     text = text_list[0].replace('\n', '')
@@ -40,6 +44,14 @@ def get_soup_for_date_and_page(start_date: str, end_date: str, page: int):
         exit(1)
 
 
+def get_hearing_site(document):
+    str_elements = [str(elem) for elem in document.find_all('div')]
+    hearing_site_bool = ['Hearing Site' in elem for elem in str_elements]
+    hearing_site_idx = [i for i, elem in enumerate(hearing_site_bool) if elem][-1]
+    hearing_site = doc.find_all('div')[hearing_site_idx].text.split(':')[1]
+    return hearing_site
+
+
 def download_pdf(pdf_url):
     pdf_name = pdf_url.split('/')[-1]
     pdf_response = requests.get(pdf_url)
@@ -62,9 +74,13 @@ def clean_page_header_from_text(txt_to_clean: str):
 
 def extract_text_from_pdf(pdf_url):
     pdf_path = download_pdf(pdf_url)
-    pdf_name = pdf_path.split('/')[-1]
-    reader = PdfFileReader(pdf_path)
+    try:
+        reader = PdfFileReader(pdf_path)
+    except pdf_utils.PdfReadError:
+        raise ExtractTextFromPDFError('Could not extract text from file')
+
     n_pages = reader.numPages
+
     # PDF to String
     text = ""
     for page in reader.pages:
@@ -72,19 +88,78 @@ def extract_text_from_pdf(pdf_url):
 
     clean_text = clean_page_header_from_text(text)
 
-    # Check PDF validity
+    # Check text validity
     if re.search('\w', clean_text) is None or len(clean_text) < 200 * n_pages:
         raise ExtractTextFromPDFError('Could not extract text from file')
     return clean_text
 
-def get_nature_of_dispute(txt: str):
-    pattern = re.compile(
-        rf"Nature of the Dispute: {nature_of_dispute_opt} vs. {nature_of_dispute_opt}(vs. {nature_of_dispute_opt})?")
-    match_iter = pattern.finditer(txt)
-    match = next(match_iter)
-    nod_str = txt[match.span()[0]:match.span()[1]]
-    nod_str = nod_str.split(':')[1]
-    return nod_str
+
+def fill_award(txt: str, data_dict: dict):
+    try:
+        award_str = re.search(r"AWARD(.*)FEES|ARBITRATOR", txt).group(1)
+        data_dict['award'] = award_str.strip()
+    except AttributeError:
+        msg = f"{data_dict['doc num']}: Could not extract the field: award"
+        logging.error(msg)
+        print(msg)
+        pass
+
+
+def fill_nature_of_dispute(txt: str, data_dict: dict):
+    try:
+        nod_str = re.search(
+            rf"Nature of the Dispute:[ ]*{ntr_dispt_opt} [a-z.]+ {ntr_dispt_opt}( [a-z.]+ {ntr_dispt_opt})?", txt).group(0)
+        nod_str = nod_str.split(':')[1]
+        data_dict['nature of dispute'] = nod_str.strip()
+    except AttributeError:
+        msg = f"{data_dict['doc num']}: Could not extract the field: nature of dispute"
+        logging.error(msg)
+        print(msg)
+        pass
+
+
+def fill_statement_of_claim_date(txt: str, data_dict: dict):
+    try:
+        case_info_str = re.search(r"CASE INFORMATION(.*)CASE SUMMARY", txt).group(1)
+        soc_str = re.search(r"Statement of Claim(.*?)\.", case_info_str).group(0)
+        soc_date = soc_str.split(":")[1]
+        data_dict['statement of claim'] = soc_date.strip()
+    except AttributeError:
+        msg = f"{data_dict['doc num']}: Could not extract the field: statement of claim date"
+        logging.error(msg)
+        print(msg)
+        pass
+
+
+def fill_case_summary(txt: str, data_dict: dict):
+    try:
+        case_summary_str = re.search(r"CASE SUMMARY(.*)RELIEF REQUESTED", txt).group(1)
+        data_dict['case summary'] = case_summary_str
+        is_settled = [key_word in case_summary_str for key_word in is_settled_key_words]
+        data_dict['is settled'] = any(is_settled)
+    except AttributeError:
+        msg = f"{data_dict['doc num']}: Could not extract the field: case summary"
+        logging.error(msg)
+        print(msg)
+        pass
+
+
+def fill_relief_requested(txt: str, data_dict: dict):
+    try:
+        relief_requested_str = re.search(
+            r"RELIEF REQUESTED(.*)In the Amended|In the Statement of Answer|At the hearing|OTHER ISSUES", txt)
+        data_dict['relief requested'] = relief_requested_str
+    except AttributeError:
+        msg = f"{data_dict['doc num']}: Could not extract the field: relief requested"
+        logging.error(msg)
+        print(msg)
+        pass
+
+
+def fill_arbitration_panel(txt: str, data_dict: dict):
+    arbitrator_str = re.search(
+        r"(ARBITRATION PANEL|ARBITRATOR)(.*)I, the undersigned Arbitrator,", txt).group(2)
+
 
 ############ CONFIGURATIONS #############
 
@@ -95,11 +170,15 @@ log_file = f'../logs/log_{strat_time_str}.log'
 logging.basicConfig(filename=log_file, level=logging.INFO,
                     format='%(levelname)s: %(message)s')
 
-start_date = datetime.datetime(2022, 3, 20)  # should be accepted as argument
-end_date = datetime.datetime(2022, 4, 1)
 
-nature_of_dispute_opt = r'(Associated Person|Member|Customer|Non-Member)'
+start_date = datetime.datetime(2021, 11, 25)  # should be accepted as argument
+end_date = datetime.datetime(2021, 12, 8)
 
+
+ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature od dispute options
+is_settled_key_words = ['settled', 'settlement', 'settle']
+
+############## MAIN CODE ###############
 
 start_date_str = start_date.strftime("%m-%d-%Y")
 end_date_str = end_date.strftime("%m-%d-%Y")
@@ -109,10 +188,11 @@ date_range_str = f'{start_date_str}_till_{end_date_str}'
 logging.info(f'LOGS FOR: {date_range_str}')
 csv_path = f"../csv/{date_range_str}.csv"
 
-############## MAIN CODE ###############
 start_date_str = start_date_str.replace('-', '/')
 end_date_str = end_date_str.replace('-', '/')
 
+
+# SCRAPE DATA
 soup = get_soup_for_date_and_page(start_date_str, end_date_str, 0)
 n_pages = get_n_pages(soup)
 
@@ -124,58 +204,61 @@ for page in range(n_pages):
 
     soup = get_soup_for_date_and_page(start_date.strftime("%m/%d/%Y"), end_date.strftime("%m/%d/%Y"), page)
     documents_table = soup.find('tbody')
-
     docs = documents_table.find_all('tr')
 
     for doc in docs:
-        try:
-            doc_dict = {}
+        doc_dict = {}
 
-            # Document Number
-            doc_num_link = doc.find('a')
-            doc_dict['doc_num'] = doc_num_link.text
-            n_files += 1
-            if True:
-            # if doc_dict['doc_num'] == '18-00566':
-                print(f"{doc_dict['doc_num']}...")
-                # Document URL
-                doc_dict['doc_url'] = 'https://www.finra.org' + doc_num_link['href']
+        # Document Number
+        doc_num_link = doc.find('a')
+        doc_dict['doc num'] = doc_num_link.text
+        n_files += 1
 
-                # Participants Information
-                participants_container = doc.find('div', class_="push-down-15")
-                participants_info = participants_container.find_all('div')
-                doc_dict['claimants'] = get_element_text_only(participants_info[0])
-                doc_dict['claimant_represent'] = get_element_text_only(participants_info[1])
-                doc_dict['respondents'] = get_element_text_only(participants_info[2])
-                doc_dict['respondent_represent'] = get_element_text_only(participants_container)
+        if True:
+        # if doc_dict['doc num'] == '21-01438':
+            print(f"{doc_dict['doc num']}...")
 
-                # Date
-                doc_dict['date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
+            doc_dict['doc url'] = 'https://www.finra.org' + doc_num_link['href']
 
-                # Hearing Site
-                doc_dict['Hearing_site'] = doc.find_all('div')[6].text.split(':')[1]
+            # Website Information
+            participants_container = doc.find('div', class_="push-down-15")
+            participants_info = participants_container.find_all('div')
 
-                # Textual data from pdf
-                text = extract_text_from_pdf(doc_dict['doc_url'])
+            doc_dict['claimants'] = get_element_text_only(participants_info[0])
+            doc_dict['claimant represent'] = get_element_text_only(participants_info[1])
+            doc_dict['respondents'] = get_element_text_only(participants_info[2])
+            doc_dict['respondent represent'] = get_element_text_only(participants_container)
+            doc_dict['award date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
+            doc_dict['hearing site'] = get_hearing_site(doc)
 
-                doc_dict['award_str'] = re.search(r"AWARD(.*)FEES|ARBITRATOR", text).group(0)[5:-4]
+            # Textual data from pdf
+            try:
+                pdf_text = extract_text_from_pdf(doc_dict['doc url'])
 
-                doc_dict['nature_of_dispute'] = get_nature_of_dispute(text)
+                fill_award(pdf_text, doc_dict)
+                fill_nature_of_dispute(pdf_text, doc_dict)
+                fill_statement_of_claim_date(pdf_text, doc_dict)
+                fill_case_summary(pdf_text, doc_dict)
+                fill_relief_requested(pdf_text, doc_dict)
+                fill_arbitration_panel(pdf_text, doc_dict)
 
+            except ExtractTextFromPDFError as e:
+                err_msg = f"{doc_dict['doc num']}: {str(e)}"
+                logging.error(err_msg)
+                print(err_msg)
+                n_failed_files += 1
+            except PermissionError as e:
+                err_msg = f"{doc_dict['doc num']}:" \
+                          f" Permission denied: '../documents/{doc_dict['doc num']}.pdf'. Close file and try again"
+                logging.error(err_msg)
+                print(err_msg)
+                n_failed_files += 1
+            finally:
                 data.append(doc_dict)
 
-        except ExtractTextFromPDFError as e:
-            err_msg = f"{doc_dict['doc_num']}: {str(e)}"
-            logging.error(err_msg)
-            print(err_msg)
-            n_failed_files += 1
-        except PermissionError as e:
-            err_msg = f"{doc_dict['doc_num']}: Permission denied: '../documents/21-02138.pdf'. Close file and try again"
-            logging.error(err_msg)
-            print(err_msg)
-            n_failed_files += 1
 
-data_df = pd.DataFrame(data)
+# SAVE DATA
+data_df = pd.DataFrame(data).fillna("NO DATA")
 
 data_df.to_csv(csv_path, index=False)
 
