@@ -53,12 +53,18 @@ def get_hearing_site(document):
 
 
 def download_pdf(pdf_url):
-    pdf_name = pdf_url.split('/')[-1]
-    pdf_response = requests.get(pdf_url)
-    path = '../documents/' + pdf_name
-    with open(path, 'wb') as pdf:
-        pdf.write(pdf_response.content)
-    return path
+    try:
+        pdf_name = pdf_url.split('/')[-1]
+        pdf_response = requests.get(pdf_url)
+        path = '../documents/' + pdf_name
+        with open(path, 'wb') as pdf:
+            pdf.write(pdf_response.content)
+        return path
+    except requests.exceptions.ConnectionError:
+        msg = f'{pdf_name}: Could not download file it might be because the internet connection failed during runtime'
+        logging.error(msg)
+        print(msg)
+        pass
 
 
 def clean_page_header_from_text(txt_to_clean: str):
@@ -97,9 +103,9 @@ def extract_text_from_pdf(pdf_url):
 def fill_award(txt: str, data_dict: dict):
     try:
         award_str = re.search(r"AWARD(.*)FEES|ARBITRATOR", txt).group(1)
-        data_dict['award'] = award_str.strip()
+        data_dict['Award'] = award_str.strip()
     except AttributeError:
-        msg = f"{data_dict['doc num']}: Could not extract the field: award"
+        msg = f"{data_dict['Doc Num']}: Could not extract the field: award"
         logging.error(msg)
         print(msg)
         pass
@@ -110,9 +116,9 @@ def fill_nature_of_dispute(txt: str, data_dict: dict):
         nod_str = re.search(
             rf"Nature of the Dispute:[ ]*{ntr_dispt_opt} [a-z.]+ {ntr_dispt_opt}( [a-z.]+ {ntr_dispt_opt})?", txt).group(0)
         nod_str = nod_str.split(':')[1]
-        data_dict['nature of dispute'] = nod_str.strip()
+        data_dict['Nature of Dispute'] = nod_str.strip()
     except AttributeError:
-        msg = f"{data_dict['doc num']}: Could not extract the field: nature of dispute"
+        msg = f"{data_dict['Doc Num']}: Could not extract the field: nature of dispute"
         logging.error(msg)
         print(msg)
         pass
@@ -123,9 +129,9 @@ def fill_statement_of_claim_date(txt: str, data_dict: dict):
         case_info_str = re.search(r"CASE INFORMATION(.*)CASE SUMMARY", txt).group(1)
         soc_str = re.search(r"Statement of Claim(.*?)\.", case_info_str).group(0)
         soc_date = soc_str.split(":")[1]
-        data_dict['statement of claim'] = soc_date.strip()
+        data_dict['Statement of Claim'] = soc_date.strip()
     except AttributeError:
-        msg = f"{data_dict['doc num']}: Could not extract the field: statement of claim date"
+        msg = f"{data_dict['Doc Num']}: Could not extract the field: statement of claim date"
         logging.error(msg)
         print(msg)
         pass
@@ -134,11 +140,11 @@ def fill_statement_of_claim_date(txt: str, data_dict: dict):
 def fill_case_summary(txt: str, data_dict: dict):
     try:
         case_summary_str = re.search(r"CASE SUMMARY(.*)RELIEF REQUESTED", txt).group(1)
-        data_dict['case summary'] = case_summary_str
+        data_dict['Case Summary'] = case_summary_str
         is_settled = [key_word in case_summary_str for key_word in is_settled_key_words]
-        data_dict['is settled'] = any(is_settled)
+        data_dict['is Settled'] = any(is_settled)
     except AttributeError:
-        msg = f"{data_dict['doc num']}: Could not extract the field: case summary"
+        msg = f"{data_dict['Doc Num']}: Could not extract the field: case summary"
         logging.error(msg)
         print(msg)
         pass
@@ -147,19 +153,47 @@ def fill_case_summary(txt: str, data_dict: dict):
 def fill_relief_requested(txt: str, data_dict: dict):
     try:
         relief_requested_str = re.search(
-            r"RELIEF REQUESTED(.*)In the Amended|In the Statement of Answer|At the hearing|OTHER ISSUES", txt)
-        data_dict['relief requested'] = relief_requested_str
+            r"RELIEF REQUESTED(.*)In the Amended|In the Statement of Answer|At the hearing|OTHER ISSUES", txt).group(1)
+        data_dict['Relief Requested'] = relief_requested_str
     except AttributeError:
-        msg = f"{data_dict['doc num']}: Could not extract the field: relief requested"
+        msg = f"{data_dict['Doc Num']}: Could not extract the field: relief requested"
         logging.error(msg)
         print(msg)
         pass
 
 
 def fill_arbitration_panel(txt: str, data_dict: dict):
-    arbitrator_str = re.search(
-        r"(ARBITRATION PANEL|ARBITRATOR)(.*)I, the undersigned Arbitrator,", txt).group(2)
+    try:
+        arbitrators_str = re.search(
+            r"(ARBITRATION PANEL|ARBITRATOR)(.*)I, the undersigned Arbitrator,", txt).group(2)
+        pattern = re.compile(rf'(.*?){arbitrators_opt}')
+        arbitrators = pattern.finditer(arbitrators_str)
+        for arbitrator in arbitrators:
+            name = arbitrator.group(1).strip('-')
+            position = arbitrator.group(2).strip()
+            post_fix = 2
+            while data_dict.setdefault(position, name) != name:
+                position = f'{position}-{post_fix}'
+                post_fix += 1
 
+    except AttributeError:
+        msg = f"{data_dict['Doc Num']}: Could not extract the field: arbitrator"
+        logging.error(msg)
+        print(msg)
+        pass
+
+def fill_hearing_sessions_fields(txt: str, data_dict: dict):
+    hearing_sessions_str = re.search(
+        r"Hearing Session Fees and Assessments(.*)Total Hearing Session Fees", txt).group(1)
+    n_pre_hearing = re.search(r'\((\d+)\) pre-hearing session[s]? with', hearing_sessions_str).group(1)
+    data_dict['Pre-Hearing Num'] = n_pre_hearing
+
+    hearing_str = re.search(
+        r"Hearing[s]?:(.*)", hearing_sessions_str).group(1)
+    pattern = re.compile(r'[ADFJMNOS][a-z*] [\d]{1,2}, [\d]{4}')
+    hearing_dates = pattern.finditer(hearing_str)
+    for date in hearing_dates:
+        print(date)
 
 ############ CONFIGURATIONS #############
 
@@ -171,11 +205,13 @@ logging.basicConfig(filename=log_file, level=logging.INFO,
                     format='%(levelname)s: %(message)s')
 
 
-start_date = datetime.datetime(2021, 11, 25)  # should be accepted as argument
-end_date = datetime.datetime(2021, 12, 8)
+start_date = datetime.datetime(2022, 3, 25)  # should be accepted as argument
+end_date = datetime.datetime(2022, 4, 8)
 
 
-ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature od dispute options
+ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature of dispute options
+arbitrators_opt = r'(Public Arbitrator, Presiding Chairperson|Public Arbitrator|Non-Public Arbitrator' \
+                  r'|Sole Public Arbitrator)'
 is_settled_key_words = ['settled', 'settlement', 'settle']
 
 ############## MAIN CODE ###############
@@ -211,29 +247,29 @@ for page in range(n_pages):
 
         # Document Number
         doc_num_link = doc.find('a')
-        doc_dict['doc num'] = doc_num_link.text
+        doc_dict['Doc Num'] = doc_num_link.text
         n_files += 1
 
         if True:
-        # if doc_dict['doc num'] == '21-01438':
-            print(f"{doc_dict['doc num']}...")
+        # if doc_dict['Doc Num'] == '21-00833':
+            print(f"{doc_dict['Doc Num']}...")
 
-            doc_dict['doc url'] = 'https://www.finra.org' + doc_num_link['href']
+            doc_dict['Doc URL'] = 'https://www.finra.org' + doc_num_link['href']
 
             # Website Information
             participants_container = doc.find('div', class_="push-down-15")
             participants_info = participants_container.find_all('div')
 
-            doc_dict['claimants'] = get_element_text_only(participants_info[0])
-            doc_dict['claimant represent'] = get_element_text_only(participants_info[1])
-            doc_dict['respondents'] = get_element_text_only(participants_info[2])
-            doc_dict['respondent represent'] = get_element_text_only(participants_container)
-            doc_dict['award date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
-            doc_dict['hearing site'] = get_hearing_site(doc)
+            doc_dict['Claimants'] = get_element_text_only(participants_info[0])
+            doc_dict['Claimant Represent'] = get_element_text_only(participants_info[1])
+            doc_dict['Respondents'] = get_element_text_only(participants_info[2])
+            doc_dict['Respondent Represent'] = get_element_text_only(participants_container)
+            doc_dict['Award Date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
+            doc_dict['Hearing Site'] = get_hearing_site(doc)
 
             # Textual data from pdf
             try:
-                pdf_text = extract_text_from_pdf(doc_dict['doc url'])
+                pdf_text = extract_text_from_pdf(doc_dict['Doc URL'])
 
                 fill_award(pdf_text, doc_dict)
                 fill_nature_of_dispute(pdf_text, doc_dict)
@@ -241,15 +277,16 @@ for page in range(n_pages):
                 fill_case_summary(pdf_text, doc_dict)
                 fill_relief_requested(pdf_text, doc_dict)
                 fill_arbitration_panel(pdf_text, doc_dict)
+                fill_hearing_sessions_fields(pdf_text, doc_dict)
 
             except ExtractTextFromPDFError as e:
-                err_msg = f"{doc_dict['doc num']}: {str(e)}"
+                err_msg = f"{doc_dict['Doc Num']}: {str(e)}"
                 logging.error(err_msg)
                 print(err_msg)
                 n_failed_files += 1
             except PermissionError as e:
-                err_msg = f"{doc_dict['doc num']}:" \
-                          f" Permission denied: '../documents/{doc_dict['doc num']}.pdf'. Close file and try again"
+                err_msg = f"{doc_dict['Doc Num']}:" \
+                          f" Permission denied: '../documents/{doc_dict['Doc Num']}.pdf'. Close file and try again"
                 logging.error(err_msg)
                 print(err_msg)
                 n_failed_files += 1
