@@ -6,6 +6,7 @@ import requests
 import datetime
 import pandas as pd
 import logging
+import os
 
 
 class ExtractTextFromPDFError(Exception):
@@ -14,6 +15,9 @@ class ExtractTextFromPDFError(Exception):
 
 
 ########## FUNCTIONS ##########
+def log_err_msg(msg: str):
+    logging.critical(msg)
+    print(msg)
 
 
 def get_element_text_only(element):
@@ -38,9 +42,7 @@ def get_soup_for_date_and_page(start_date: str, end_date: str, page: int):
         html_txt = requests.get(url_str).text
         return BeautifulSoup(html_txt, 'lxml')
     except requests.exceptions.ConnectionError:
-        msg = 'Could Not Reach Finra\'s website. Check internet conection'
-        logging.critical(msg)
-        print(msg)
+        log_err_msg('Could Not Reach Finra\'s website. Check internet conection')
         exit(1)
 
 
@@ -61,9 +63,8 @@ def download_pdf(pdf_url):
             pdf.write(pdf_response.content)
         return path
     except requests.exceptions.ConnectionError:
-        msg = f'{pdf_name}: Could not download file it might be because the internet connection failed during runtime'
-        logging.error(msg)
-        print(msg)
+        log_err_msg(
+            f'{pdf_name}: Could not download file it might be because the internet connection failed during runtime')
         pass
 
 
@@ -94,6 +95,8 @@ def extract_text_from_pdf(pdf_url):
 
     clean_text = clean_page_header_from_text(text)
 
+    # os.remove(pdf_path)
+
     # Check text validity
     if re.search('\w', clean_text) is None or len(clean_text) < 200 * n_pages:
         raise ExtractTextFromPDFError('Could not extract text from file')
@@ -102,12 +105,10 @@ def extract_text_from_pdf(pdf_url):
 
 def fill_award(txt: str, data_dict: dict):
     try:
-        award_str = re.search(r"AWARD(.*)FEES|ARBITRATOR", txt).group(1)
+        award_str = re.search(r"AWARD(.*)(FEES|ARBITRATOR|ARBITRATION PANEL)", txt).group(1)
         data_dict['Award'] = award_str.strip()
     except AttributeError:
-        msg = f"{data_dict['Doc Num']}: Could not extract the field: award"
-        logging.error(msg)
-        print(msg)
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: award")
         pass
 
 
@@ -118,47 +119,40 @@ def fill_nature_of_dispute(txt: str, data_dict: dict):
         nod_str = nod_str.split(':')[1]
         data_dict['Nature of Dispute'] = nod_str.strip()
     except AttributeError:
-        msg = f"{data_dict['Doc Num']}: Could not extract the field: nature of dispute"
-        logging.error(msg)
-        print(msg)
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: nature of dispute")
         pass
 
 
 def fill_statement_of_claim_date(txt: str, data_dict: dict):
     try:
-        case_info_str = re.search(r"CASE INFORMATION(.*)CASE SUMMARY", txt).group(1)
-        soc_str = re.search(r"Statement of Claim(.*?)\.", case_info_str).group(0)
-        soc_date = soc_str.split(":")[1]
-        data_dict['Statement of Claim'] = soc_date.strip()
+        case_info_str = re.search(r"INFORMATION(.*)CASE SUMMARY", txt).group(1)
+        soc_date = re.search(r"Statement of Claim(.*?)([ADFJMNOS][a-z]* [\d]{1,2},[ ]?[\d]{4})\.", case_info_str).group(2)
+        data_dict['Statement of Claim Date'] = soc_date
     except AttributeError:
-        msg = f"{data_dict['Doc Num']}: Could not extract the field: statement of claim date"
-        logging.error(msg)
-        print(msg)
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: statement of claim date")
         pass
 
 
 def fill_case_summary(txt: str, data_dict: dict):
     try:
-        case_summary_str = re.search(r"CASE SUMMARY(.*)RELIEF REQUESTED", txt).group(1)
-        data_dict['Case Summary'] = case_summary_str
-        is_settled = [key_word in case_summary_str for key_word in is_settled_key_words]
+        cs_str = re.search(r"CASE SUMMARY(.*)RELIEF REQUESTED", txt).group(1)
+        data_dict['Case Summary'] = cs_str
+        is_settled = [key_word in cs_str for key_word in is_settled_key_words]
         data_dict['is Settled'] = any(is_settled)
     except AttributeError:
-        msg = f"{data_dict['Doc Num']}: Could not extract the field: case summary"
-        logging.error(msg)
-        print(msg)
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: case summary")
         pass
 
 
 def fill_relief_requested(txt: str, data_dict: dict):
     try:
-        relief_requested_str = re.search(
-            r"RELIEF REQUESTED(.*)In the Amended|In the Statement of Answer|At the hearing|OTHER ISSUES", txt).group(1)
-        data_dict['Relief Requested'] = relief_requested_str
+        rr_str = re.search(
+            r"RELIEF REQUESTED(.*?)(In the Amended|In the Statement of Answer|At the hearing|OTHER)", txt).group(1)
+        if rr_str == '':
+            rr_str = re.search(r"RELIEF REQUESTED(.*)OTHER", txt).group(1)
+        data_dict['Relief Requested'] = rr_str.strip()
     except AttributeError:
-        msg = f"{data_dict['Doc Num']}: Could not extract the field: relief requested"
-        logging.error(msg)
-        print(msg)
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: relief requested")
         pass
 
 
@@ -171,31 +165,59 @@ def fill_arbitration_panel(txt: str, data_dict: dict):
         for arbitrator in arbitrators:
             name = arbitrator.group(1).strip('-')
             position = arbitrator.group(2).strip()
-            post_fix = 2
-            while data_dict.setdefault(position, name) != name:
-                position = f'{position}-{post_fix}'
-                post_fix += 1
+            curr_value = data_dict[position]
+            if curr_value is None:
+                data_dict[position] = name
+            elif curr_value != name:
+                data_dict[f'{position}-2'] = name
 
     except AttributeError:
-        msg = f"{data_dict['Doc Num']}: Could not extract the field: arbitrator"
-        logging.error(msg)
-        print(msg)
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the fields of arbitrators ")
         pass
 
-def fill_hearing_sessions_fields(txt: str, data_dict: dict):
-    hearing_sessions_str = re.search(
-        r"Hearing Session Fees and Assessments(.*)Total Hearing Session Fees", txt).group(1)
-    n_pre_hearing = re.search(r'\((\d+)\) pre-hearing session[s]? with', hearing_sessions_str).group(1)
-    data_dict['Pre-Hearing Num'] = n_pre_hearing
 
-    hearing_str = re.search(
-        r"Hearing[s]?:(.*)", hearing_sessions_str).group(1)
-    pattern = re.compile(r'[ADFJMNOS][a-z*] [\d]{1,2}, [\d]{4}')
-    hearing_dates = pattern.finditer(hearing_str)
-    for date in hearing_dates:
-        print(date)
+def fill_hearing_sessions_fields(txt: str, data_dict: dict):
+    try:
+        hs_str = re.search(
+            r"Hearing Session Fees and Assessments(.*)Total Hearing Session Fees", txt).group(1)
+        try:
+            n_pre_hearing = re.search(r'\((\d+)\) pre-hearing session[s]?', hs_str).group(1)
+            data_dict['Pre-Hearing Num'] = n_pre_hearing
+        except AttributeError:
+            log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: Pre-Hearing Num ")
+            pass
+        try:
+            n_hearing = re.search(r'\((\d+)\) hearing session[s]?', hs_str).group(1)
+            data_dict['Hearing Num'] = n_hearing
+        except AttributeError:
+            log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: Hearing Num ")
+            pass
+        try:
+            hearings_str = re.search(
+                r"Hearing[s]?:(.*)", hs_str).group(1)
+            pattern = re.compile(r'[ADFJMNOS][a-z]* [\d]{1,2},[ ]?[\d]{4}')
+            hearing_dates = pattern.findall(hearings_str)
+            data_dict['First Hearing Date'] = hearing_dates[0]
+            data_dict['Last Hearing Date'] = hearing_dates[-1]
+        except (AttributeError, IndexError):
+            log_err_msg(f"{data_dict['Doc Num']}: Could not extract the fields of hearing sessions dates ")
+            pass
+    except AttributeError:
+        log_err_msg(f"{data_dict['Doc Num']}: Could not extract the fields of hearing sessions ")
+        pass
+
 
 ############ CONFIGURATIONS #############
+
+start_date = datetime.datetime(2021, 9, 25)
+end_date = datetime.datetime(2022, 3, 18)
+
+
+ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature of dispute options
+arbitrators_opt = r'(Public Arbitrator, Presiding Chairperson|Public Arbitrator|Non-Public Arbitrator' \
+                  r'|Sole Public Arbitrator)'
+is_settled_key_words = ['settled', 'settlement', 'settle']
+
 
 # Logging configurations
 now = datetime.datetime.now()
@@ -204,15 +226,6 @@ log_file = f'../logs/log_{strat_time_str}.log'
 logging.basicConfig(filename=log_file, level=logging.INFO,
                     format='%(levelname)s: %(message)s')
 
-
-start_date = datetime.datetime(2022, 3, 25)  # should be accepted as argument
-end_date = datetime.datetime(2022, 4, 8)
-
-
-ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature of dispute options
-arbitrators_opt = r'(Public Arbitrator, Presiding Chairperson|Public Arbitrator|Non-Public Arbitrator' \
-                  r'|Sole Public Arbitrator)'
-is_settled_key_words = ['settled', 'settlement', 'settle']
 
 ############## MAIN CODE ###############
 
@@ -227,8 +240,13 @@ csv_path = f"../csv/{date_range_str}.csv"
 start_date_str = start_date_str.replace('-', '/')
 end_date_str = end_date_str.replace('-', '/')
 
+fields = ['Doc Num', 'Doc URL', 'Claimants', 'Claimant Represent', 'Respondents', 'Respondent Represent', 'Award Date',
+          'Hearing Site', 'Award', 'Nature of Dispute', 'Statement of Claim Date', 'Case Summary', 'is Settled',
+          'Relief Requested', 'Pre-Hearing Num', 'Hearing Num', 'First Hearing Date', 'Last Hearing Date',
+          'Sole Public Arbitrator', 'Public Arbitrator, Presiding Chairperson', 'Public Arbitrator',
+          'Public Arbitrator-2', 'Non-Public Arbitrator']
 
-# SCRAPE DATA
+# PROCESS PDF FILE
 soup = get_soup_for_date_and_page(start_date_str, end_date_str, 0)
 n_pages = get_n_pages(soup)
 
@@ -243,7 +261,7 @@ for page in range(n_pages):
     docs = documents_table.find_all('tr')
 
     for doc in docs:
-        doc_dict = {}
+        doc_dict = dict.fromkeys(fields)
 
         # Document Number
         doc_num_link = doc.find('a')
@@ -251,7 +269,7 @@ for page in range(n_pages):
         n_files += 1
 
         if True:
-        # if doc_dict['Doc Num'] == '21-00833':
+        # if doc_dict['Doc Num'] == '20-03530':
             print(f"{doc_dict['Doc Num']}...")
 
             doc_dict['Doc URL'] = 'https://www.finra.org' + doc_num_link['href']
@@ -280,24 +298,23 @@ for page in range(n_pages):
                 fill_hearing_sessions_fields(pdf_text, doc_dict)
 
             except ExtractTextFromPDFError as e:
-                err_msg = f"{doc_dict['Doc Num']}: {str(e)}"
-                logging.error(err_msg)
-                print(err_msg)
+                log_err_msg( f"{doc_dict['Doc Num']}: {str(e)}")
                 n_failed_files += 1
             except PermissionError as e:
-                err_msg = f"{doc_dict['Doc Num']}:" \
-                          f" Permission denied: '../documents/{doc_dict['Doc Num']}.pdf'. Close file and try again"
-                logging.error(err_msg)
-                print(err_msg)
+                log_err_msg(f"{doc_dict['Doc Num']}: Permission denied, Close file and try again")
                 n_failed_files += 1
             finally:
                 data.append(doc_dict)
 
 
+
 # SAVE DATA
 data_df = pd.DataFrame(data).fillna("NO DATA")
 
-data_df.to_csv(csv_path, index=False)
+try:
+    data_df.to_csv(csv_path, index=False)
+except PermissionError:
+    print( 'Permission denied: ../csv/02-25-2022_till_03-18-2022.csv, close file and try again' )
 
 print(f'\nCSV Saved to {csv_path}')
 print(f'\nCould not process {n_failed_files} files out of {n_files}')
