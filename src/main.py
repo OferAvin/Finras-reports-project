@@ -3,10 +3,10 @@ from PyPDF2 import utils as pdf_utils
 import re
 from bs4 import BeautifulSoup, NavigableString
 import requests
-import datetime
+from datetime import datetime
 import pandas as pd
 import logging
-import os
+from os import remove
 
 
 class ExtractTextFromPDFError(Exception):
@@ -83,19 +83,19 @@ def extract_text_from_pdf(pdf_url):
     pdf_path = download_pdf(pdf_url)
     try:
         reader = PdfFileReader(pdf_path)
-    except pdf_utils.PdfReadError:
+        n_pages = reader.numPages
+
+        # PDF to String
+        text = ""
+        for page in reader.pages:
+            text += page.extractText()
+
+    except (pdf_utils.PdfReadError, AttributeError):
         raise ExtractTextFromPDFError('Could not extract text from file')
-
-    n_pages = reader.numPages
-
-    # PDF to String
-    text = ""
-    for page in reader.pages:
-        text += page.extractText()
 
     clean_text = clean_page_header_from_text(text)
 
-    # os.remove(pdf_path)
+    remove(pdf_path)
 
     # Check text validity
     if re.search('\w', clean_text) is None or len(clean_text) < 200 * n_pages:
@@ -158,11 +158,11 @@ def fill_relief_requested(txt: str, data_dict: dict):
 
 def fill_arbitration_panel(txt: str, data_dict: dict):
     try:
-        arbitrators_str = re.search(
-            r"(ARBITRATION PANEL|ARBITRATOR)(.*)I, the undersigned Arbitrator,", txt).group(2)
+        ap_str = re.search(
+            r"(ARBITRATION PANEL|ARBITRATOR)([^\W].*?)I, the undersigned Arbitrator,", txt).group(2)
         pattern = re.compile(rf'(.*?){arbitrators_opt}')
-        arbitrators = pattern.finditer(arbitrators_str)
-        for arbitrator in arbitrators:
+        arbitrators = pattern.finditer(ap_str)
+        for idx, arbitrator in enumerate(arbitrators):
             name = arbitrator.group(1).strip('-')
             position = arbitrator.group(2).strip()
             curr_value = data_dict[position]
@@ -170,6 +170,8 @@ def fill_arbitration_panel(txt: str, data_dict: dict):
                 data_dict[position] = name
             elif curr_value != name:
                 data_dict[f'{position}-2'] = name
+            if idx == 2:
+                break
 
     except AttributeError:
         log_err_msg(f"{data_dict['Doc Num']}: Could not extract the fields of arbitrators ")
@@ -209,18 +211,18 @@ def fill_hearing_sessions_fields(txt: str, data_dict: dict):
 
 ############ CONFIGURATIONS #############
 
-start_date = datetime.datetime(2021, 9, 25)
-end_date = datetime.datetime(2022, 3, 18)
+start_date = datetime(2021, 11, 27)
+end_date = datetime(2022, 1, 27)
 
 
 ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature of dispute options
-arbitrators_opt = r'(Public Arbitrator, Presiding Chairperson|Public Arbitrator|Non-Public Arbitrator' \
-                  r'|Sole Public Arbitrator)'
+arbitrators_opt = r'(Public Arbitrator, Presiding Chairperson|Non-Public Arbitrator, Presiding Chairperson|' \
+                  r'Public Arbitrator|Non-Public Arbitrator|Sole Public Arbitrator)'
 is_settled_key_words = ['settled', 'settlement', 'settle']
 
 
 # Logging configurations
-now = datetime.datetime.now()
+now = datetime.now()
 strat_time_str = now.strftime('%m-%d-%Y_%H-%M-%S')
 log_file = f'../logs/log_{strat_time_str}.log'
 logging.basicConfig(filename=log_file, level=logging.INFO,
@@ -244,7 +246,7 @@ fields = ['Doc Num', 'Doc URL', 'Claimants', 'Claimant Represent', 'Respondents'
           'Hearing Site', 'Award', 'Nature of Dispute', 'Statement of Claim Date', 'Case Summary', 'is Settled',
           'Relief Requested', 'Pre-Hearing Num', 'Hearing Num', 'First Hearing Date', 'Last Hearing Date',
           'Sole Public Arbitrator', 'Public Arbitrator, Presiding Chairperson', 'Public Arbitrator',
-          'Public Arbitrator-2', 'Non-Public Arbitrator']
+          'Non-Public Arbitrator, Presiding Chairperson', 'Non-Public Arbitrator']
 
 # PROCESS PDF FILE
 soup = get_soup_for_date_and_page(start_date_str, end_date_str, 0)
@@ -269,7 +271,7 @@ for page in range(n_pages):
         n_files += 1
 
         if True:
-        # if doc_dict['Doc Num'] == '20-03530':
+        # if doc_dict['Doc Num'] == '20-03148':
             print(f"{doc_dict['Doc Num']}...")
 
             doc_dict['Doc URL'] = 'https://www.finra.org' + doc_num_link['href']
@@ -303,6 +305,10 @@ for page in range(n_pages):
             except PermissionError as e:
                 log_err_msg(f"{doc_dict['Doc Num']}: Permission denied, Close file and try again")
                 n_failed_files += 1
+            except Exception as e:
+                log_err_msg(f"{doc_dict['Doc Num']}: Some unknown error occurred during text extraction"
+                            f" with the message: {str(e)}")
+
             finally:
                 data.append(doc_dict)
 
