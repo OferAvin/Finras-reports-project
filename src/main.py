@@ -211,8 +211,8 @@ def fill_hearing_sessions_fields(txt: str, data_dict: dict):
 
 ############ CONFIGURATIONS #############
 
-start_date = datetime(2021, 11, 27)
-end_date = datetime(2022, 1, 27)
+start_date = datetime(2021, 12, 21)
+end_date = datetime(2021, 12, 21)
 
 
 ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature of dispute options
@@ -271,7 +271,7 @@ for page in range(n_pages):
         n_files += 1
 
         if True:
-        # if doc_dict['Doc Num'] == '20-03148':
+        # if doc_dict['Doc Num'] == '21-01278':
             print(f"{doc_dict['Doc Num']}...")
 
             doc_dict['Doc URL'] = 'https://www.finra.org' + doc_num_link['href']
