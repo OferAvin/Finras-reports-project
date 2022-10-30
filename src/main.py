@@ -115,7 +115,8 @@ def fill_award(txt: str, data_dict: dict):
 def fill_nature_of_dispute(txt: str, data_dict: dict):
     try:
         nod_str = re.search(
-            rf"Nature of the Dispute:[ ]*{ntr_dispt_opt} [a-z.]+ {ntr_dispt_opt}( [a-z.]+ {ntr_dispt_opt})?", txt).group(0)
+            rf"Nature of\s?(the)? Dispute:[ ]*{ntr_dispt_opt} [a-z.]+ {ntr_dispt_opt}( [a-z.]+ {ntr_dispt_opt})?",
+            txt).group(0)
         nod_str = nod_str.split(':')[1]
         data_dict['Nature of Dispute'] = nod_str.strip()
     except AttributeError:
@@ -126,7 +127,8 @@ def fill_nature_of_dispute(txt: str, data_dict: dict):
 def fill_statement_of_claim_date(txt: str, data_dict: dict):
     try:
         case_info_str = re.search(r"INFORMATION(.*)CASE SUMMARY", txt).group(1)
-        soc_date = re.search(r"Statement of Claim(.*?)([ADFJMNOS][a-z]* [\d]{1,2},[ ]?[\d]{4})\.", case_info_str).group(2)
+        soc_date = re.search(r"Statement of Claim(.*?)([ADFJMNOS][a-z]* [\d]{1,2},[ ]?[\d]{4})\.", case_info_str).group(
+            2)
         data_dict['Statement of Claim Date'] = soc_date
     except AttributeError:
         log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: statement of claim date")
@@ -159,13 +161,15 @@ def fill_relief_requested(txt: str, data_dict: dict):
 def fill_arbitration_panel(txt: str, data_dict: dict):
     try:
         ap_str = re.search(
-            r"(ARBITRATION PANEL|ARBITRATOR)([^\W].*?)I, the undersigned Arbitrator,", txt).group(2)
+            r"(ARBITRATION PANEL|ARBITRATOR)(\s?[^\W].*?)I, the undersigned Arbitrator,", txt).group(2)
         pattern = re.compile(rf'(.*?){arbitrators_opt}')
         arbitrators = pattern.finditer(ap_str)
         for idx, arbitrator in enumerate(arbitrators):
             name = arbitrator.group(1).strip('-')
             position = arbitrator.group(2).strip()
             curr_value = data_dict[position]
+            if name.isspace():
+                name = "empty string was retrieved"
             if curr_value is None:
                 data_dict[position] = name
             elif curr_value != name:
@@ -181,22 +185,21 @@ def fill_arbitration_panel(txt: str, data_dict: dict):
 def fill_hearing_sessions_fields(txt: str, data_dict: dict):
     try:
         hs_str = re.search(
-            r"Hearing Session Fees and Assessments(.*)Total Hearing Session Fees", txt).group(1)
+            r"Hearing Session Fees and Assessments(.*)(Total Hearing Session Fees|ARBITRATION)", txt).group(1)
         try:
-            n_pre_hearing = re.search(r'\((\d+)\) pre-hearing session[s]?', hs_str).group(1)
+            n_pre_hearing = re.search(r'\((\d+)\) [Pp]re-hearing session[s]?', hs_str).group(1)
             data_dict['Pre-Hearing Num'] = n_pre_hearing
         except AttributeError:
             log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: Pre-Hearing Num ")
             pass
         try:
-            n_hearing = re.search(r'\((\d+)\) hearing session[s]?', hs_str).group(1)
+            n_hearing = re.search(r'\((\d+)\) [Hh]earing session[s]?', hs_str).group(1)
             data_dict['Hearing Num'] = n_hearing
         except AttributeError:
             log_err_msg(f"{data_dict['Doc Num']}: Could not extract the field: Hearing Num ")
             pass
         try:
-            hearings_str = re.search(
-                r"Hearing[s]?:(.*)", hs_str).group(1)
+            hearings_str = re.search(r"Hearing[s]?(\sDate[s]?)?:(.*)", hs_str).group(2)
             pattern = re.compile(r'[ADFJMNOS][a-z]* [\d]{1,2},[ ]?[\d]{4}')
             hearing_dates = pattern.findall(hearings_str)
             data_dict['First Hearing Date'] = hearing_dates[0]
@@ -211,15 +214,13 @@ def fill_hearing_sessions_fields(txt: str, data_dict: dict):
 
 ############ CONFIGURATIONS #############
 
-start_date = datetime(2021, 12, 21)
-end_date = datetime(2021, 12, 21)
-
+start_date = datetime(2014, 12, 19)
+end_date = datetime(2014, 12, 31)
 
 ntr_dispt_opt = r'(Associated Person[s]?|Member[s]?|Customer[s]?|Non-Member[s]?)'  # nature of dispute options
 arbitrators_opt = r'(Public Arbitrator, Presiding Chairperson|Non-Public Arbitrator, Presiding Chairperson|' \
                   r'Public Arbitrator|Non-Public Arbitrator|Sole Public Arbitrator)'
 is_settled_key_words = ['settled', 'settlement', 'settle']
-
 
 # Logging configurations
 now = datetime.now()
@@ -227,7 +228,6 @@ strat_time_str = now.strftime('%m-%d-%Y_%H-%M-%S')
 log_file = f'../logs/log_{strat_time_str}.log'
 logging.basicConfig(filename=log_file, level=logging.INFO,
                     format='%(levelname)s: %(message)s')
-
 
 ############## MAIN CODE ###############
 
@@ -247,6 +247,7 @@ fields = ['Doc Num', 'Doc URL', 'Claimants', 'Claimant Represent', 'Respondents'
           'Relief Requested', 'Pre-Hearing Num', 'Hearing Num', 'First Hearing Date', 'Last Hearing Date',
           'Sole Public Arbitrator', 'Public Arbitrator, Presiding Chairperson', 'Public Arbitrator',
           'Non-Public Arbitrator, Presiding Chairperson', 'Non-Public Arbitrator']
+
 
 # PROCESS PDF FILE
 soup = get_soup_for_date_and_page(start_date_str, end_date_str, 0)
@@ -271,7 +272,9 @@ for page in range(n_pages):
         n_files += 1
 
         if True:
-        # if doc_dict['Doc Num'] == '21-01278':
+        # if doc_dict['Doc Num'] == '19-02974':
+        # if doc_dict['Doc Num'] == '14-01222':
+        # if doc_dict['Doc Num'] == '20-03279':
             print(f"{doc_dict['Doc Num']}...")
 
             doc_dict['Doc URL'] = 'https://www.finra.org' + doc_num_link['href']
@@ -282,8 +285,16 @@ for page in range(n_pages):
 
             doc_dict['Claimants'] = get_element_text_only(participants_info[0])
             doc_dict['Claimant Represent'] = get_element_text_only(participants_info[1])
-            doc_dict['Respondents'] = get_element_text_only(participants_info[2])
-            doc_dict['Respondent Represent'] = get_element_text_only(participants_container)
+            try:
+                doc_dict['Respondents'] = get_element_text_only(participants_info[2])
+            except IndexError:
+                log_err_msg(f"{doc_dict['Doc Num']}: Respondents does not appear on website")
+                pass
+            try:
+                doc_dict['Respondent Represent'] = get_element_text_only(participants_container)
+            except IndexError:
+                log_err_msg(f"{doc_dict['Doc Num']}: Respondent Represent does not appear on website")
+                pass
             doc_dict['Award Date'] = doc.find('td', class_="views-field views-field-field-core-official-dt").text
             doc_dict['Hearing Site'] = get_hearing_site(doc)
 
@@ -300,7 +311,7 @@ for page in range(n_pages):
                 fill_hearing_sessions_fields(pdf_text, doc_dict)
 
             except ExtractTextFromPDFError as e:
-                log_err_msg( f"{doc_dict['Doc Num']}: {str(e)}")
+                log_err_msg(f"{doc_dict['Doc Num']}: {str(e)}")
                 n_failed_files += 1
             except PermissionError as e:
                 log_err_msg(f"{doc_dict['Doc Num']}: Permission denied, Close file and try again")
@@ -312,15 +323,13 @@ for page in range(n_pages):
             finally:
                 data.append(doc_dict)
 
-
-
 # SAVE DATA
 data_df = pd.DataFrame(data).fillna("NO DATA")
 
 try:
     data_df.to_csv(csv_path, index=False)
 except PermissionError:
-    print( 'Permission denied: ../csv/02-25-2022_till_03-18-2022.csv, close file and try again' )
+    print('Permission denied: ../csv/02-25-2022_till_03-18-2022.csv, close file and try again')
 
 print(f'\nCSV Saved to {csv_path}')
 print(f'\nCould not process {n_failed_files} files out of {n_files}')
